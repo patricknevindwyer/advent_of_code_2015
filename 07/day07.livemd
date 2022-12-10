@@ -1,0 +1,163 @@
+# Day 07
+
+```elixir
+Mix.install([
+  {:memoize, "~> 1.4"}
+])
+```
+
+## Data
+
+```elixir
+data = "#{__DIR__}/part01.dat" |> File.read!()
+```
+
+```elixir
+defmodule Circuit do
+  use Memoize
+
+  def parse(raw) do
+    raw
+    |> String.split("\n")
+    |> Enum.map(&parse_node/1)
+    |> Map.new()
+  end
+
+  def set_wire_to(circuit, wire, value) do
+    circuit |> Map.put(wire, {:literal, value})
+  end
+
+  def calculate(circuit, target) do
+    circuit
+    |> Map.get(target)
+    |> calculate_to_target(circuit)
+  end
+
+  defmemo(calculate_to_target({:literal, v}, _circuit), do: v)
+
+  defmemo calculate_to_target({:lookup, v}, circuit) do
+    circuit |> Map.get(v) |> calculate_to_target(circuit)
+  end
+
+  defmemo calculate_to_target({:and, {ta, a}, {tb, b}}, circuit) do
+    av =
+      if ta == :literal do
+        a
+      else
+        circuit |> Map.get(a) |> calculate_to_target(circuit)
+      end
+
+    bv =
+      if tb == :literal do
+        b
+      else
+        circuit |> Map.get(b) |> calculate_to_target(circuit)
+      end
+
+    Bitwise.band(av, bv)
+  end
+
+  defmemo calculate_to_target({:or, {:node, a}, {:node, b}}, circuit) do
+    av = circuit |> Map.get(a) |> calculate_to_target(circuit)
+    bv = circuit |> Map.get(b) |> calculate_to_target(circuit)
+    Bitwise.bor(av, bv)
+  end
+
+  defmemo calculate_to_target({:not, {:node, a}}, circuit) do
+    circuit |> Map.get(a) |> calculate_to_target(circuit) |> Bitwise.bnot() |> Bitwise.band(65535)
+  end
+
+  defmemo calculate_to_target({:lshift, {:node, a}, {:literal, v}}, circuit) do
+    circuit |> Map.get(a) |> calculate_to_target(circuit) |> Bitwise.bsl(v)
+  end
+
+  defmemo calculate_to_target({:rshift, {:node, a}, {:literal, v}}, circuit) do
+    circuit |> Map.get(a) |> calculate_to_target(circuit) |> Bitwise.bsr(v)
+  end
+
+  defp parse_node(line) do
+    [left, target] = line |> String.split("->") |> Enum.map(&String.trim/1)
+
+    compute =
+      cond do
+        left =~ ~r/^\d+$/ ->
+          {:literal, String.to_integer(left)}
+
+        left =~ ~r/^[a-zA-Z]+$/ ->
+          {:lookup, left}
+
+        left =~ ~r/^NOT\s[a-zA-Z]+$/ ->
+          node = left |> String.split(" ") |> Enum.drop(1) |> List.first()
+          {:not, {:node, node}}
+
+        left =~ ~r/^[a-zA-Z0-9]+\s(AND|OR)\s[a-zA-Z0-9]+$/ ->
+          [l_hand, op, r_hand] = left |> String.split(" ")
+
+          {l_value, r_value} =
+            case {l_hand =~ ~r/^\d+$/, r_hand =~ ~r/^\d+$/} do
+              {true, true} ->
+                {
+                  {:literal, String.to_integer(l_hand)},
+                  {:literal, String.to_integer(r_hand)}
+                }
+
+              {true, false} ->
+                {
+                  {:literal, String.to_integer(l_hand)},
+                  {:node, r_hand}
+                }
+
+              {false, true} ->
+                {
+                  {:node, l_hand},
+                  {:literal, String.to_integer(r_hand)}
+                }
+
+              {false, false} ->
+                {
+                  {:node, l_hand},
+                  {:node, r_hand}
+                }
+            end
+
+          {op |> String.downcase() |> String.to_atom(), l_value, r_value}
+
+        left =~ ~r/^[a-zA-Z]+\s(LSHIFT|RSHIFT)\s\d+$/ ->
+          [l_hand, op, r_hand] = left |> String.split(" ")
+
+          {op |> String.downcase() |> String.to_atom(), {:node, l_hand},
+           {:literal, r_hand |> String.to_integer()}}
+
+        true ->
+          {:error, left}
+      end
+
+    {target, compute}
+  end
+end
+```
+
+## Part 01
+
+```elixir
+data
+|> Circuit.parse()
+|> Circuit.calculate("a")
+```
+
+## Part 02
+
+```elixir
+# Get our circuit
+circuit = data |> Circuit.parse()
+
+# calculate our override value
+new_b =
+  circuit
+  |> Circuit.calculate("a")
+
+# override and run
+circuit
+|> Circuit.set_wire_to("b", new_b)
+|> Circuit.calculate("a")
+```
